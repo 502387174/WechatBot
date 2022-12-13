@@ -72,7 +72,6 @@ func (g *GroupMessageHandler) ReplyText() error {
 		logger.Info("user message is null")
 		return nil
 	}
-
 	// 3.请求GPT获取回复
 	reply, err := gpt.Completions(requestText)
 	if err != nil {
@@ -93,7 +92,6 @@ func (g *GroupMessageHandler) ReplyText() error {
 	if err != nil {
 		return errors.New(fmt.Sprintf("response user error: %v ", err))
 	}
-
 	// 5.返回错误信息
 	return err
 }

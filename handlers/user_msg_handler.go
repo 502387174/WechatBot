@@ -7,11 +7,17 @@ import (
 	"github.com/869413421/wechatbot/gpt"
 	"github.com/869413421/wechatbot/pkg/logger"
 	"github.com/869413421/wechatbot/service"
+	"github.com/coocood/freecache"
 	"github.com/eatmoreapple/openwechat"
+	"strconv"
 	"strings"
 )
 
 var _ MessageHandlerInterface = (*UserMessageHandler)(nil)
+var Bot *openwechat.Bot
+
+// 缓存大小，100M
+var userRequestCache = freecache.NewCache(100 * 1024 * 1024)
 
 // UserMessageHandler 私聊消息处理
 type UserMessageHandler struct {
@@ -47,6 +53,19 @@ func (h *UserMessageHandler) handle() error {
 	return nil
 }
 
+func SetBot(b *openwechat.Bot) {
+	Bot = b
+}
+
+// 所有好友
+func getFriends() (f openwechat.Friends) {
+	// 获取登陆的用户
+	bot := Bot
+	self, _ := bot.GetCurrentUser()
+	f, _ = self.Friends()
+	return f
+}
+
 // ReplyText 发送文本消息到群
 func (h *UserMessageHandler) ReplyText() error {
 	logger.Info(fmt.Sprintf("Received User %v Text Msg : %v", h.sender.NickName, h.msg.Content))
@@ -56,7 +75,34 @@ func (h *UserMessageHandler) ReplyText() error {
 		logger.Info("user message is null")
 		return nil
 	}
-
+	if strings.Contains(requestText, "清除用户缓存") && h.sender.NickName == "锐" {
+		split := strings.Split(requestText, ":")
+		key := []byte(split[1])
+		friends := getFriends()
+		for _, friend := range friends {
+			if friend.NickName == split[1] {
+				logger.Info("清除用户缓存:", split[1])
+				userRequestCache.Del(key)
+			}
+		}
+		_, err := h.msg.ReplyText("清除用户" + split[1] + "缓存成功")
+		return err
+	}
+	userName := h.sender.UserName
+	key := []byte(userName)
+	got, _ := userRequestCache.Get(key)
+	num := 0
+	//存在次数
+	atoi, err := strconv.Atoi(string(got))
+	num = atoi
+	if num >= 3 {
+		_, err = h.msg.ReplyText("感谢您的体验，每个用户体验10次，一小时后重置")
+		if err != nil {
+			return errors.New(fmt.Sprintf("已经超过体验次数: %v ", num))
+		}
+		return err
+	}
+	fmt.Printf("%v用户已经体验次数: %v ", h.sender.NickName, num)
 	// 2.向GPT发起请求，如果回复文本等于空,不回复
 	reply, err := gpt.Completions(h.getRequestText())
 	if err != nil {
@@ -68,14 +114,16 @@ func (h *UserMessageHandler) ReplyText() error {
 		}
 		return err
 	}
-
 	// 2.设置上下文，回复用户
 	h.service.SetUserSessionContext(h.msg.Content, reply)
 	_, err = h.msg.ReplyText(buildUserReply(reply))
 	if err != nil {
 		return errors.New(fmt.Sprintf("response user error: %v ", err))
 	}
-
+	//过期时间
+	expire := 60 * 60 // expire in 60*60 seconds
+	// 设置KEY
+	userRequestCache.Set(key, []byte(strconv.Itoa(num+1)), expire)
 	// 3.返回错误
 	return err
 }
